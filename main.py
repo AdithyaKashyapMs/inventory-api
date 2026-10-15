@@ -2,40 +2,76 @@
     wires everything together and runs the application when executed directly.
 """
 
+from typing_extensions import Literal
+
 from fastapi import FastAPI, HTTPException, Depends
 from models import Product, ProductCreate, ProductUpdate
 from repository import ProductRepository, InMemoryRepository
+from strategies import DiscountStrategy, NoDiscount, BulkDiscount, SeasonalDiscount
 
 # Create the FastAPI application instance. This is the main entry point for the API, where routes and middleware will be registered.
 app = FastAPI(title="Smart Inventory API")
 
 # create a single shared repository instance
 repository = InMemoryRepository()
+discount_strategy: dict[str, DiscountStrategy] = {
+    "none": NoDiscount(),
+    "bulk": BulkDiscount(),
+    "seasonal": SeasonalDiscount(percentage=15.0),
+}
 
 # Dependency injection function - provides the repository to endpoints
 def get_repository() -> ProductRepository:
     return repository
 
+def get_discount_strategy(
+    discount: Literal["none", "bulk", "seasonal"] = "none",
+) -> DiscountStrategy:
+    return discount_strategy[discount]
+
+    """💡 What does this code do?   
+
+    This function is a FastAPI dependency. It reads the discount query parameter from the URL and returns the matching strategy. 
+    The Literal["none", "bulk", "seasonal"] type annotation tells FastAPI to only accept those three values.
+    If someone sends ?discount=invalid, FastAPI automatically returns a 422 validation error. It also renders a dropdown in the /docs UI showing the valid options."""
 
 
+
+"""💡 What does this code do?
+
+strategy: DiscountStrategy = Depends(get_discount_strategy) injects whichever strategy the query parameter selected.
+The loop applies calculate_discount() to each product's price and quantity.
+model_copy(update=...) creates a copy of the product with discounted_price set. If the discounted price equals the original, it stays None (no discount applied)."""
 @app.get("/products", response_model=list[Product])
 def list_products(
-    repo: ProductRepository = Depends(get_repository)  # Use dependency injection to get the repository instance
+    repo: ProductRepository = Depends(get_repository),
+    strategy: DiscountStrategy = Depends(get_discount_strategy),
 ):
-    """Endpoint to list all products in the inventory."""
-    return repo.get_all()  # Return all products from the repository
+    # Retrieve all products and apply the chosen discount strategy
+    products = repo.get_all()
+    result = []
+    for product in products:
+        discounted = strategy.calculate_discount(product.price, product.quantity)
+        updated = product.model_copy(
+            update={"discounted_price": discounted if discounted != product.price else None}
+        )
+        result.append(updated)
+    return result
 
 @app.get("/products/{product_id}", response_model=Product)
 def get_product(
-    product_id: int,  # Path parameter for the product ID
-    repo: ProductRepository = Depends(get_repository)  # Use dependency injection to get the repository instance
+    product_id: int,
+    repo: ProductRepository = Depends(get_repository),
+    strategy: DiscountStrategy = Depends(get_discount_strategy),
 ):
-    """Endpoint to retrieve a single product by its ID."""
-    # Look up a single product by its Id
-    product = repo.get_by_id(product_id)  # Retrieve the product from the repository
-    if product is None:  # If the product does not exist, raise a 404
+    product = repo.get_by_id(product_id)
+    if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product  # Return the found product
+    # Apply the selected discount strategy to this single product
+    discounted = strategy.calculate_discount(product.price, product.quantity)
+    return product.model_copy(
+        update={"discounted_price": discounted if discounted != product.price else None}
+    )
 
 
 @app.post("/products", response_model=Product, status_code=201)

@@ -36,7 +36,7 @@ class ProductCreate(ProductBase):
 
 class Product(ProductBase):
     id: int # id is added to the base model for products that are retrieved from the database, ensuring each product has a unique identifier.
-    discounted_prize: float | None = None # discounted_prize is optional, allowing for products that may not have a discount applied.
+    discounted_price: float | None = None # discounted_price is optional, allowing for products that may not have a discount applied.
 
 class ProductUpdate(BaseModel):
     name: str | None = None
