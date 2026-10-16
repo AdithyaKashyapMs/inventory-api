@@ -5,7 +5,7 @@
 from typing_extensions import Literal
 
 from fastapi import FastAPI, HTTPException, Depends
-from models import Product, ProductCreate, ProductUpdate
+from models import Product, ProductCreate, ProductUpdate, Category
 from repository import ProductRepository, InMemoryRepository
 from strategies import DiscountStrategy, NoDiscount, BulkDiscount, SeasonalDiscount
 
@@ -46,9 +46,13 @@ model_copy(update=...) creates a copy of the product with discounted_price set. 
 def list_products(
     repo: ProductRepository = Depends(get_repository),
     strategy: DiscountStrategy = Depends(get_discount_strategy),
+    category: Category | None = None,
 ):
     # Retrieve all products and apply the chosen discount strategy
     products = repo.get_all()
+    if category is not None:
+        products = [product for product in products if product.category == category]
+
     result = []
     for product in products:
         discounted = strategy.calculate_discount(product.price, product.quantity)
@@ -57,6 +61,34 @@ def list_products(
         )
         result.append(updated)
     return result
+
+
+@app.get("/products/stats")
+def get_inventory_stats(
+    repo: ProductRepository = Depends(get_repository),
+):
+    products = repo.get_all()
+    if not products:
+        return {"total_products": 0, "total_value": 0.0, "categories": {}}
+
+    total_value = sum(product.price * product.quantity for product in products)
+    categories: dict[str, dict[str, int | float]] = {}
+    for product in products:
+        category = product.category.value
+        if category not in categories:
+            categories[category] = {"count": 0, "value": 0.0}
+        categories[category]["count"] += 1
+        categories[category]["value"] += product.price * product.quantity
+
+    for category in categories:
+        categories[category]["value"] = round(categories[category]["value"], 2)
+
+    return {
+        "total_products": len(products),
+        "total_value": round(total_value, 2),
+        "categories": categories,
+    }
+
 
 @app.get("/products/{product_id}", response_model=Product)
 def get_product(
